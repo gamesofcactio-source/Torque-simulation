@@ -1,5 +1,5 @@
-*.exe
-*.out
-*.app
+**/*.exe
+**/*.out
+**/*.app
 
 build/
