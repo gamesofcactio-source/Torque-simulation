@@ -1,3 +1,4 @@
-torque-simulation
+*.exe
 
+**/bin/
 build/
