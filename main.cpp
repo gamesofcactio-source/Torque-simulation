@@ -1,11 +1,10 @@
 #include <SDL2/SDL.h>
-#include <SDL2/SDL_events.h>
+#include <SDL2/SDL_error.h>
 #include <SDL2/SDL_pixels.h>
 #include <SDL2/SDL_rect.h>
 #include <SDL2/SDL_render.h>
-#include <SDL2/SDL_stdinc.h>
 #include <SDL2/SDL_surface.h>
-#include <SDL2/SDL_timer.h>
+#include <SDL2/SDL_ttf.h>
 #include <cmath>
 #include <cstddef>
 #include <iostream>
@@ -21,31 +20,36 @@ int gScreenHeight{};
 
 SDL_Surface *gRectangle{NULL};
 SDL_Window *gWindow{NULL};
-SDL_Surface *gScreenSurface{NULL};
-SDL_Renderer *gDoor{NULL};
-SDL_RendererFlip flip;
+SDL_Texture *gDoorTexture{NULL};
 
-double Force{};
-float Length{};
-double Theta{};
-double Result{};
-double Mass{};
-double dt{20};
-double Alpha{};
-double Omega{5};
+/** handles all drawing operations for the entire window */
+SDL_Renderer *gRenderer{NULL};
+SDL_Texture *gTextureText{NULL};
+
+/**For rendering font */
+TTF_Font *gFont;
+SDL_Surface *gSurfaceText;
+
 constexpr double PI = 3.14159265;
 
 using namespace std;
 
 int main(int argc, char *args[]) {
+
+  double Force{};
+  float Length{};
+  double Theta{};
+  double Result{};
+  double Mass{};
+  double dt{};
+
   cout << "Pass integers for screen size(Prefered 800*600)" << '\n';
   cout << "Screen Height:";
   cin >> gScreenHeight;
-
   cout << "Screen Width:";
   cin >> gScreenWidth;
 
-  cout << "Pass real number" << '\n';
+  cout << "Pass real numbers" << '\n';
   cout << "Force(Newton):";
   cin >> Force;
 
@@ -64,49 +68,74 @@ int main(int argc, char *args[]) {
   cout << "Mass(Kg):";
   cin >> Mass;
 
-  double Tau = Force * sin(Theta * PI / 180) * Length;
+  cout << "Time(Sec):";
+  cin >> dt;
+
+  double tau = Force * sin(Theta * PI / 180) * Length;
+  double movemntOfInertia = 1.0 / 3 * Mass * Length * Length;
+  double alpha = tau / movemntOfInertia;
+  double omege = alpha * dt;
+
   if (!init()) {
     cout << "failed to initialize!";
   } else {
-    /** Hack to get window to stay up */
-    SDL_Texture *gDoorTexture =
-        SDL_CreateTexture(gDoor, SDL_PIXELFORMAT_RGBA8888,
-                          SDL_TEXTUREACCESS_TARGET, 10.0f, Length);
-    SDL_SetRenderTarget(gDoor, gDoorTexture);
-    SDL_SetRenderDrawColor(gDoor, 0, 0, 0, 0);
-    SDL_RenderClear(gDoor);
-    SDL_SetRenderDrawColor(gDoor, 225, 225, 225, 225);
+    /** creating texture */
+    gDoorTexture = SDL_CreateTexture(gRenderer, SDL_PIXELFORMAT_RGBA8888,
+                                     SDL_TEXTUREACCESS_TARGET, 10.0f, Length);
+
+    /** Redirect all drawing commands to our texture */
+    SDL_SetRenderTarget(gRenderer, gDoorTexture);
+
+    /** Frect for gDoorTexture */
     SDL_FRect rect{gScreenWidth / 2.0f, gScreenHeight / 2.0f, Length, 3.0f};
-    SDL_SetRenderTarget(gDoor, NULL);
+    SDL_RenderFillRectF(gRenderer, &rect);
 
-    SDL_RenderFillRectF(gDoor, &rect);
+    /** Fills the entire 10xLength texture with this color */
+    SDL_SetRenderDrawColor(gRenderer, 0, 71, 171, 1);
+    SDL_RenderClear(gRenderer);
 
-    float angle{0};
-    angle += Omega * dt;
+    SDL_SetRenderTarget(gRenderer, NULL);
+
+    /** Render the text */
+    SDL_Rect posText{10, 10, 400, 100};
+    // SDL_RenderCopy(gRenderer, gTextureText, NULL, posText);
+
+    float angle{0.0f};
     SDL_FPoint center{0, rect.h / 2};
     Uint32 startTime = SDL_GetTicks();
     SDL_Event e;
     bool quit{false};
+
+    /** Hack to get window to stay up */
     while (!quit) {
       Uint32 currentTime = SDL_GetTicks();
       float deltaTime = (currentTime - startTime) / 1000.0f;
+      startTime = currentTime;
+
       /** SDL_PollEvent(&event) checks if an event exists in the queue */
       while (SDL_PollEvent(&e)) {
         if (e.type == SDL_QUIT) {
           quit = true;
         }
       }
-      SDL_SetRenderDrawColor(gDoor, 30, 30, 30, 255);
-      SDL_RenderClear(gDoor);
-      SDL_RenderCopyExF(gDoor, gDoorTexture, NULL, &rect, angle, &center,
-                        SDL_FLIP_NONE);
-      SDL_RenderPresent(gDoor);
-      angle += Omega * deltaTime;
-      startTime = currentTime;
-      SDL_Delay(16);
 
-      /** Update the surface */
-      SDL_UpdateWindowSurface(gWindow);
+      angle += omege * deltaTime;
+
+      SDL_SetRenderDrawColor(gRenderer, 225, 225, 225, 255);
+      /** Draw the background */
+
+      /** give the window the red color */
+      SDL_RenderClear(gRenderer);
+
+      /** Rotating */
+      SDL_RenderCopyExF(gRenderer, gDoorTexture, NULL, &rect, angle, &center,
+                        SDL_FLIP_NONE);
+
+      /** Update the screen */
+      SDL_RenderPresent(gRenderer);
+
+      /** Rough cap to ~60FPS */
+      SDL_Delay(16);
     }
   }
   close();
@@ -115,69 +144,55 @@ int main(int argc, char *args[]) {
 
 bool init() {
   bool success{true};
-  /** Initialized SDL's video subsystem */
+
+  /** Initializing SDL's video subsystem */
   if (SDL_Init(SDL_INIT_VIDEO) < 0) {
-    cout << "SDL could not be initialized";
+    cout << "SDL could not be initialized" << SDL_GetError();
     success = false;
   } else {
     /** Create a gWindow */
     gWindow = SDL_CreateWindow("Torque Simulation", SDL_WINDOWPOS_UNDEFINED,
                                SDL_WINDOWPOS_UNDEFINED, gScreenWidth,
                                gScreenHeight, SDL_WINDOW_SHOWN);
-    gDoor = SDL_CreateRenderer(gWindow, -1, 0);
+    gRenderer = SDL_CreateRenderer(gWindow, -1, 0);
     if (gWindow == NULL) {
       cout << "Window and door could not be created" << SDL_GetError();
       success = false;
-    } else {
-      /** Get gWindow surface An SDL surface is just an image data type that
-      contains the pixels of an image along with all data needed to render it */
-      gScreenSurface = SDL_GetWindowSurface(gWindow);
     }
   }
-  return success;
-}
 
-bool loadMedia() {
-  bool success{true};
-  gRectangle = SDL_LoadBMP("assets/Rectangle.bmp");
-
-  if (gRectangle == NULL) {
-    cout << "unable to load the meadia" << SDL_GetError();
+  /** Initializing ttf */
+  if (TTF_Init() < 0) {
+    cout << "TTF could not be initialized" << TTF_GetError();
     success = false;
   }
+  gFont = TTF_OpenFont("assets/GoogleSans_17pt-Regular.ttf", 32);
+  if (gFont == NULL) {
+    cout << "Font could not be loaded" << TTF_GetError();
+    success = false;
+  }
+
+  SDL_Color fg = {0, 0, 0, 225};
+  SDL_Color bg = {225, 225, 225, 225};
+  gSurfaceText = TTF_RenderText(gFont, "Hello world", fg, bg);
+
+  gTextureText = SDL_CreateTextureFromSurface(gRenderer, gSurfaceText);
   return success;
 }
-void rotate(int theta) {
-  SDL_Point center;
-  center.x = gScreenWidth / 2;
-  center.y = gScreenHeight / 2;
-
-  float w{5.0f};
-  float l{Length};
-
-  // corners
-  SDL_FPoint p[4] = {
-      {-w / 2, -l / 2}, {w / 2, -l / 2}, {w / 2, l / 2}, {-w / 2, l / 2}};
-
-  for (int i{0}; i < 4; i++) {
-    float x = p[i].x;
-    float y = p[i].y;
-
-    p[i].x = center.x + cos(theta) * x - sin(theta) * y;
-    p[i].y = center.y + sin(theta) * x - cos(theta) * y;
-  }
-  SDL_RenderDrawLine(gDoor, p[0].x, p[0].y, p[1].x, p[1].y);
-  SDL_RenderDrawLine(gDoor, p[1].x, p[1].y, p[2].x, p[2].y);
-  SDL_RenderDrawLine(gDoor, p[2].x, p[2].y, p[3].x, p[3].y);
-  SDL_RenderDrawLine(gDoor, p[3].x, p[3].y, p[0].x, p[0].y);
-}
-
 void close() {
-  /** Deallocate surface */
-  SDL_FreeSurface(gRectangle);
-  gRectangle = NULL;
+  /** Deallocate the memory for the surface */
+  SDL_FreeSurface(gSurfaceText);
+
+  /** Close font */
+  TTF_CloseFont(gFont);
+
+  /** Destroy texture */
+  SDL_DestroyTexture(gTextureText);
+  SDL_DestroyTexture(gDoorTexture);
+
   /** Destroy render */
-  SDL_DestroyRenderer(gDoor);
+  SDL_DestroyRenderer(gRenderer);
+
   /** Destroy window */
   SDL_DestroyWindow(gWindow);
 }
